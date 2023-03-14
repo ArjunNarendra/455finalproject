@@ -1,0 +1,955 @@
+{
+  "cells": [
+    {
+      "cell_type": "markdown",
+      "metadata": {
+        "id": "view-in-github",
+        "colab_type": "text"
+      },
+      "source": [
+        "<a href=\"https://colab.research.google.com/github/ArjunNarendra/455finalproject/blob/main/Remove%20extraneous%20output%20from%20Noisy%20Captcha%20Pipeline%20Notebook%20\" target=\"_parent\"><img src=\"https://colab.research.google.com/assets/colab-badge.svg\" alt=\"Open In Colab\"/></a>"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {
+        "id": "FaeTRmYEaT3c"
+      },
+      "source": [
+        "# Final Project: Breaking CAPTCHAs\n",
+        "\n",
+        "Our final project will involve solving CAPTCHAs, which are images with sequences of letters and numbers used to \"verify\" that a user is a human."
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {
+        "id": "HAB6IoYL_aSP"
+      },
+      "source": [
+        "##Step 1: Neural Network Modeling\n",
+        "\n",
+        "Since CAPTCHAs use uppercase, lowercase, and digits, we will be using the EMNIST dataset to create a classifier. After we train it, we can use the pre-trained weights. That means that this section of code should only be run once to train the classifier."
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "metadata": {
+        "id": "a0mfFPCl_leJ"
+      },
+      "outputs": [],
+      "source": [
+        "import torch\n",
+        "import torchvision\n",
+        "\n",
+        "def get_emnist_data():\n",
+        "  # Need to perform a rotate and flip to properly orient the images\n",
+        "  trainset = torchvision.datasets.EMNIST(root='./data', split='byclass', train=True, download=True,\n",
+        "                                        transform=torchvision.transforms.Compose([\n",
+        "                                            lambda img: torchvision.transforms.functional.rotate(img, -90),\n",
+        "                                            lambda img: torchvision.transforms.functional.hflip(img),\n",
+        "                                            torchvision.transforms.ToTensor()\n",
+        "                                        ]))\n",
+        "  trainloader = torch.utils.data.DataLoader(trainset, batch_size=32, shuffle=True, num_workers=8)\n",
+        "\n",
+        "  testset = torchvision.datasets.EMNIST(root='./data', split='byclass', train=False, download=True,\n",
+        "                                      transform=torchvision.transforms.Compose([\n",
+        "                                          lambda img: torchvision.transforms.functional.rotate(img, -90),\n",
+        "                                          lambda img: torchvision.transforms.functional.hflip(img),\n",
+        "                                          torchvision.transforms.ToTensor()\n",
+        "                                      ]))\n",
+        "  testloader = torch.utils.data.DataLoader(testset, batch_size=32, shuffle=False, num_workers=8)\n",
+        "  # 0-9 are for digits, 10-35 are for uppercase letters, 36-61 are for lowercase letters\n",
+        "  classes = []\n",
+        "  for i in range(0, 10):\n",
+        "    classes.append(i)\n",
+        "  for letter in \"ABCDEFGHIJKLMNOPQRSTUVWXYZ\":\n",
+        "    classes.append(letter)\n",
+        "  for letter in \"abcdefghijklmnopqrstuvwxyz\":\n",
+        "    classes.append(letter)\n",
+        "  return {'train': trainloader, 'test': testloader, 'classes': classes}"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "metadata": {
+        "id": "5QHAk4N1_yfM"
+      },
+      "outputs": [],
+      "source": [
+        "# Get EMNIST data\n",
+        "data = get_emnist_data()"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "metadata": {
+        "id": "EveXLnOB_2oD"
+      },
+      "outputs": [],
+      "source": [
+        "# Print out details about the training data\n",
+        "print(data['train'].__dict__)"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "metadata": {
+        "id": "t8DNwVaT_3Ij"
+      },
+      "outputs": [],
+      "source": [
+        "# Print out details about the testing data\n",
+        "print(data['test'].__dict__)"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "metadata": {
+        "id": "yJole--N_5_2"
+      },
+      "outputs": [],
+      "source": [
+        "# Get images and labels for one batch of the training data\n",
+        "dataiter = iter(data['train'])\n",
+        "images, labels = next(dataiter)\n",
+        "print(images.size())"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "metadata": {
+        "id": "X8gD31GCACaT"
+      },
+      "outputs": [],
+      "source": [
+        "import matplotlib.pyplot as plt\n",
+        "import numpy as np\n",
+        "import torchvision\n",
+        "\n",
+        "def imshow(img):\n",
+        "  npimg = img.numpy()\n",
+        "  plt.imshow(np.transpose(npimg, (1, 2, 0)))\n",
+        "  plt.show()\n",
+        "\n",
+        "# Show first batch of images\n",
+        "imshow(torchvision.utils.make_grid(images))\n",
+        "# Print labels for first 8 digits\n",
+        "print(\"Labels:\" + ' '.join('%9s' % data['classes'][labels[j]] for j in range(8)))\n",
+        "\n",
+        "print(images.size())\n",
+        "flat = torch.flatten(images, 1)\n",
+        "print(flat.size())"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "metadata": {
+        "id": "gxSbGf7rADNM"
+      },
+      "outputs": [],
+      "source": [
+        "import torch\n",
+        "\n",
+        "# Try to switch to the CPU if possible\n",
+        "device = torch.device(\"cuda:0\" if torch.cuda.is_available() else \"cpu\")\n",
+        "print(device)"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "metadata": {
+        "id": "7cCtbLxeAGjI"
+      },
+      "outputs": [],
+      "source": [
+        "import torch.optim as optim\n",
+        "\n",
+        "def train(net, dataloader, epochs=1, lr=0.01, momentum=0.9, decay=0.0005, verbose=1):\n",
+        "  net.to(device)\n",
+        "  losses = []\n",
+        "  # We are using CrossEntropy loss and Stochastic Gradient Descent \n",
+        "  criterion = nn.CrossEntropyLoss()\n",
+        "  optimizer = optim.SGD(net.parameters(), lr=lr, momentum=momentum, weight_decay=decay)\n",
+        "  for epoch in range(epochs):\n",
+        "    sum_loss = 0.0\n",
+        "    for i, batch in enumerate(dataloader, 0):\n",
+        "      # Get the inputs and associated labels for this particular batch of data\n",
+        "      inputs, labels = batch[0].to(device), batch[1].to(device)\n",
+        "      # Zero the parameter gradients\n",
+        "      optimizer.zero_grad()\n",
+        "      # Forward propogate, backward propogate, and update weights\n",
+        "      outputs = net(inputs)\n",
+        "      loss = criterion(outputs, labels)\n",
+        "      loss.backward()  \n",
+        "      optimizer.step()\n",
+        "      # Print loss information every 100 batches\n",
+        "      losses.append(loss.item())\n",
+        "      sum_loss += loss.item()\n",
+        "      if i % 100 == 99:\n",
+        "        if verbose:\n",
+        "          print('[%d, %5d] loss: %.3f' %\n",
+        "            (epoch + 1, i + 1, sum_loss / 100))\n",
+        "        sum_loss = 0.0\n",
+        "  return losses"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "metadata": {
+        "id": "OqQuvL5hANTf"
+      },
+      "outputs": [],
+      "source": [
+        "import torch.nn as nn\n",
+        "import torch.nn.functional as F\n",
+        "\n",
+        "# Convolutional neural network with two convolutional layers\n",
+        "class ConvNet(nn.Module):\n",
+        "  def __init__(self):\n",
+        "    super(ConvNet, self).__init__()\n",
+        "    # Input 28x28x1 image\n",
+        "    # 16 filters\n",
+        "    # 3x3 filter size (they also have 3 channels)\n",
+        "    # stride 2 (downsampling by factor of 2)\n",
+        "    # Output image: 14x14x16\n",
+        "    self.conv1 = nn.Conv2d(1, 16, 3, stride=2, padding=1)\n",
+        "\n",
+        "    # Input 14x14x16 image\n",
+        "    # 32 filters\n",
+        "    # 3x3x16 filter size (they also have 16 channels)\n",
+        "    # stride 2 (downsampling by factor of 2)\n",
+        "    # Output image: 7x7x32\n",
+        "    self.conv2 = nn.Conv2d(16, 32, 3, stride=2, padding=1)\n",
+        "\n",
+        "    # Fully connected linear layer\n",
+        "    self.fc1 = nn.Linear(1568, 62)\n",
+        "\n",
+        "  def forward(self, x):\n",
+        "    x = self.conv1(x)\n",
+        "    x = F.relu(x)\n",
+        "    x = self.conv2(x)\n",
+        "    x = F.relu(x)\n",
+        "    x = torch.flatten(x, 1)\n",
+        "    x = self.fc1(x)\n",
+        "    return x"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "metadata": {
+        "id": "lWEmmjRDAUWW"
+      },
+      "outputs": [],
+      "source": [
+        "# Use simulated annealing for training ConvNet\n",
+        "anneal_net = ConvNet()\n",
+        "\n",
+        "anneal_losses =  train(anneal_net, data['train'], epochs=2, lr=.1)\n",
+        "anneal_losses += train(anneal_net, data['train'], epochs=2, lr=.01)\n",
+        "anneal_losses += train(anneal_net, data['train'], epochs=2, lr=.001)\n",
+        "\n",
+        "plt.plot(anneal_losses)"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "metadata": {
+        "id": "w_IE53YTBiYr"
+      },
+      "outputs": [],
+      "source": [
+        "from google.colab import files\n",
+        "\n",
+        "# Save the model weights into a file, then download that file\n",
+        "torch.save(anneal_net.state_dict(), 'model_state.pth')\n",
+        "files.download('model_state.pth')"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "metadata": {
+        "id": "qk74Y6HYAZS7"
+      },
+      "outputs": [],
+      "source": [
+        "def accuracy(net, dataloader):\n",
+        "  correct = 0\n",
+        "  total = 0\n",
+        "  with torch.no_grad():\n",
+        "    for batch in dataloader: \n",
+        "      # Get images and labels for the current batch\n",
+        "      images, labels = batch[0].to(device), batch[1].to(device)\n",
+        "      # Get predicted labels from our network\n",
+        "      outputs = net(images)\n",
+        "      _, predicted = torch.max(outputs.data, 1)\n",
+        "      # Tally up the number of correct predictions that our network made\n",
+        "      total += labels.size(0)\n",
+        "      correct += (predicted == labels).sum().item()\n",
+        "  return correct/total"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "metadata": {
+        "id": "hyzKxO6CAaCw"
+      },
+      "outputs": [],
+      "source": [
+        "print(\"AnnealNet train accuracy: %f\" % accuracy(anneal_net, data['train']))"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "metadata": {
+        "id": "LEIIr09LAgyH"
+      },
+      "outputs": [],
+      "source": [
+        "print(\"AnnealNet test accuracy: %f\" % accuracy(anneal_net, data['test']))"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {
+        "id": "-alIXVK5acuq"
+      },
+      "source": [
+        "\n",
+        "## Step 2: Load images\n",
+        "\n",
+        "We load images of CAPTCHAs from a Kaggle dataset."
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "metadata": {
+        "id": "zbWxCYDYafo2"
+      },
+      "outputs": [],
+      "source": [
+        "# NOTE: First, must upload kaggle.json with credentials\n",
+        "# Install the kaggle library\n",
+        "! pip install kaggle\n",
+        "# Make a directory named .kaggle\n",
+        "! mkdir ~/.kaggle\n",
+        "# Copy the kaggle.json into this new directory\n",
+        "! cp kaggle.json ~/.kaggle/\n",
+        "# Allocate the required permissions for this file\n",
+        "! chmod 600 ~/.kaggle/kaggle.json"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "metadata": {
+        "id": "fpTtHl9UnsiM"
+      },
+      "outputs": [],
+      "source": [
+        "# Download the noisy CAPTCHA dataset\n",
+        "! kaggle datasets download alizahidraja/captcha-data"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "metadata": {
+        "id": "p7m0FXOzpTuk"
+      },
+      "outputs": [],
+      "source": [
+        "# Unzip the file\n",
+        "! unzip captcha-data.zip"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "metadata": {
+        "id": "auTK8kBj8_5F"
+      },
+      "outputs": [],
+      "source": [
+        "import glob\n",
+        "import torchvision\n",
+        "import re\n",
+        "from PIL import Image\n",
+        "import numpy as np\n",
+        "\n",
+        "# Dictionary for images. Key is the filename information. Value is the pixel data\n",
+        "# stored as a tensor.\n",
+        "imagesDict = {}\n",
+        "\n",
+        "for im_path in glob.glob(\"data/*/*.png\"):\n",
+        "  # Convert the image to one channel\n",
+        "  oneChannelImage = Image.open(im_path).convert(\"L\")\n",
+        "  # Transform the image to a numpy array\n",
+        "  imageData = np.array(oneChannelImage, dtype=np.uint8)\n",
+        "  # Extract relevant file name information\n",
+        "  filename = re.search(r\"[A-Za-z1-9]{5}\", im_path).group()\n",
+        "  # Add the key-value mapping to dictionary\n",
+        "  imagesDict[filename] = imageData"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "metadata": {
+        "id": "lOhaAS9V-MIQ"
+      },
+      "outputs": [],
+      "source": [
+        "import matplotlib.pyplot as plt\n",
+        "\n",
+        "# Get all the tags of the images in this dataset\n",
+        "imagesTags = list(imagesDict.keys())\n",
+        "# Get the tag corresponding to the first image\n",
+        "firstImageTag = imagesTags[0]\n",
+        "# Get the image data corresponding to the tag\n",
+        "imageData = imagesDict.get(firstImageTag)\n",
+        "\n",
+        "# Show this image with dimensions 24 x 72\n",
+        "plt.gray()\n",
+        "plt.imshow(imageData)\n",
+        "plt.show()\n",
+        "\n",
+        "# Print out its dimensions\n",
+        "print(imageData.shape)"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {
+        "id": "63p7UH_NbRBC"
+      },
+      "source": [
+        "## Step 3: Denoising and Character Segmentation\n",
+        "\n",
+        "We denoise a CAPTCHA, find bounding boxes around each character in the CAPTCHA, extract the individual characters, and normalize them."
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "metadata": {
+        "id": "GRX8p_zPSEMK"
+      },
+      "outputs": [],
+      "source": [
+        "def flipColor(character):\n",
+        "  for i in range(character.shape[0]):\n",
+        "    for j in range(character.shape[1]):\n",
+        "      # Let's say that anything at or above 150 will go to 0\n",
+        "      if character[i, j] > 150:\n",
+        "        character[i, j] = 0\n",
+        "      else:\n",
+        "        character[i, j] = 255\n",
+        "  return character"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "metadata": {
+        "id": "BQYrXzC8SPWU"
+      },
+      "outputs": [],
+      "source": [
+        "import scipy\n",
+        "import cv2\n",
+        "\n",
+        "# Given a purely black-and-white image, attempt\n",
+        "# to remove line, dot, and fuzziness noise \n",
+        "def denoise_captcha(img):\n",
+        "  eroded = img\n",
+        "  eroded = eroded.astype('uint8')\n",
+        "\n",
+        "  # perform a 2x2 erosion to chop up larger line noise\n",
+        "  erode_kernel = np.ones((2, 2), np.uint8)\n",
+        "  eroded = cv2.erode(eroded, erode_kernel, iterations=1)\n",
+        "\n",
+        "  # use both vertical and horizontal median filters\n",
+        "  # to eliminate the chopped-up line noise\n",
+        "  med_1 = scipy.ndimage.median_filter(eroded, (5, 2))\n",
+        "  med_2 = scipy.ndimage.median_filter(med_1, (1, 3))\n",
+        "\n",
+        "  # dilate to buff up the legitimate characters' lines, which have\n",
+        "  # been weakened by the above operations\n",
+        "  dilate_kernel = np.ones((3, 3), np.uint8)\n",
+        "  dilated = cv2.dilate(med_2, dilate_kernel, iterations=1)\n",
+        "\n",
+        "  # in case the dilation also made noisy dots stronger,\n",
+        "  # perform another median as a final step to weaken\n",
+        "  # this noise\n",
+        "  denoised = scipy.ndimage.median_filter(dilated, (2, 2))\n",
+        "\n",
+        "  return denoised"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "metadata": {
+        "id": "sSjd6q2gS5BZ"
+      },
+      "outputs": [],
+      "source": [
+        "def segment_noise(im):\n",
+        "  # since this image is larger, using a bigger min area will lead to \n",
+        "  # better filtering\n",
+        "  MIN_CHAR_AREA = 200\n",
+        "\n",
+        "  seg_chars = []\n",
+        "\n",
+        "  # change this if there are more than 5 characters per noisy\n",
+        "  # captcha\n",
+        "  TOT_CHARS = 5\n",
+        "\n",
+        "  to_segment = np.copy(im)\n",
+        "  blurred = cv2.blur(to_segment, (5,5), 0)\n",
+        "  img_thresh = cv2.adaptiveThreshold(blurred, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 11, 2)\n",
+        "\n",
+        "  contours, hierarchy = cv2.findContours(img_thresh, cv2.RETR_LIST, cv2.CHAIN_APPROX_NONE)\n",
+        "\n",
+        "  # TODO: uncomment and run this loop (and the following \n",
+        "  # plt lines outside this loop) to generate some cool pics for \n",
+        "  # the writeup\n",
+        "  # for contour in contours:\n",
+        "  #     if cv2.contourArea(contour) > MIN_CHAR_AREA:\n",
+        "  #         [X, Y, W, H] = cv2.boundingRect(contour)\n",
+        "  #         cv2.rectangle(to_segment, (X, Y), (X + W, Y + H), (0,255, 0), 1)\n",
+        "  \n",
+        "  # plt.imshow(to_segment)\n",
+        "  # plt.show()\n",
+        "\n",
+        "  # cv2.boundingRect returns X, Y, and width and height of the bounding\n",
+        "  # box. Use the box's X coordinate to sort the contours from left to right,\n",
+        "  # which will make it easier to enumerate through individual characters\n",
+        "  contours = sorted(contours, key=lambda contour: cv2.boundingRect(contour)[0])\n",
+        "  # first, get the effective area of all the contours\n",
+        "  tot_contours_area = 0.0\n",
+        "  tot_width = 0.0\n",
+        "  for contour in contours:\n",
+        "    # get based on width\n",
+        "    w = cv2.boundingRect(contour)[2]\n",
+        "    c_area = cv2.contourArea(contour)\n",
+        "    if c_area >= MIN_CHAR_AREA:\n",
+        "      tot_contours_area += c_area\n",
+        "      tot_width += w\n",
+        "  \n",
+        "  # using this contours area, we can roughly approximate how to split\n",
+        "  # contours that encompass multiple characters \n",
+        "\n",
+        "  for contour in contours:\n",
+        "    c_area = cv2.contourArea(contour)\n",
+        "    if c_area >= MIN_CHAR_AREA:\n",
+        "      x, y, w, h = cv2.boundingRect(contour)\n",
+        "\n",
+        "      multi_char = im[y:y+h, x:x+w]\n",
+        "\n",
+        "      # to split, first figure out how many characters are in the\n",
+        "      # contour. Take the fraction of the total effective contour\n",
+        "      # area encompassed by this contour (we can also do it based on width\n",
+        "      # of the contours)\n",
+        "\n",
+        "      frac_area = c_area / tot_contours_area\n",
+        "      frac_width = w / tot_width\n",
+        "      # may need to adjust this rounding for boundary cases\n",
+        "      num_chars = round(TOT_CHARS * frac_area)\n",
+        "      num_chars_w = round(TOT_CHARS * frac_width)\n",
+        "\n",
+        "      if num_chars_w < 1:\n",
+        "        continue\n",
+        "\n",
+        "      # Major assumption: all characters are roughly the same width.\n",
+        "      # This might be a dangerous assumption to make, but we will have\n",
+        "      # to do with it for now...\n",
+        "      # char_w = w // num_chars\n",
+        "      char_w = w // num_chars_w\n",
+        "\n",
+        "      chars = []\n",
+        "\n",
+        "      for i in range(num_chars):\n",
+        "        char_start = i * char_w\n",
+        "        chars.append(multi_char[:, char_start:char_start+char_w])\n",
+        "\n",
+        "      for char in chars:\n",
+        "        # EMNIST uses square images\n",
+        "        char_w = char.shape[1]\n",
+        "        char_h = char.shape[0]\n",
+        "        square = max(char.shape[0], char.shape[1])\n",
+        "\n",
+        "        square_char = np.zeros((square, square), dtype=np.uint8)\n",
+        "        square_char[...] = 255\n",
+        "\n",
+        "        # center the image\n",
+        "        x_off = (square - char_w) // 2\n",
+        "        y_off = (square - char_h) // 2\n",
+        "\n",
+        "        square_char[y_off:y_off+char_h, x_off:x_off+char_w] = char\n",
+        "\n",
+        "        adj_char = cv2.resize(square_char, (28, 28), interpolation=cv2.INTER_AREA)\n",
+        "\n",
+        "        seg_chars.append(adj_char)\n",
+        "\n",
+        "  return seg_chars"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "metadata": {
+        "id": "NwozOvvcBWau"
+      },
+      "outputs": [],
+      "source": [
+        "imageData = flipColor(imageData)\n",
+        "imageDenoised = denoise_captcha(imageData)\n",
+        "imageDenoised = flipColor(imageDenoised)\n",
+        "characters = segment_noise(imageDenoised)\n",
+        "for character in characters:\n",
+        "  plt.imshow(character)\n",
+        "  plt.show()"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {
+        "id": "ebA7cfgowW41"
+      },
+      "source": [
+        "## Step 4: CAPTCHA Processing\n",
+        "\n",
+        "Once we have trained our neural network model on the EMNIST dataset, we can proceed to test our model on a CAPTCHA. "
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "metadata": {
+        "id": "K44v7ypWDEXV"
+      },
+      "outputs": [],
+      "source": [
+        "import torch.nn as nn\n",
+        "import torch.nn.functional as F\n",
+        "\n",
+        "# Convolutional neural network with two convolutional layers\n",
+        "class ConvNet(nn.Module):\n",
+        "  def __init__(self):\n",
+        "    super(ConvNet, self).__init__()\n",
+        "    # Input 28x28x1 image\n",
+        "    # 16 filters\n",
+        "    # 3x3 filter size (they also have 3 channels)\n",
+        "    # stride 2 (downsampling by factor of 2)\n",
+        "    # Output image: 14x14x16\n",
+        "    self.conv1 = nn.Conv2d(1, 16, 3, stride=2, padding=1)\n",
+        "\n",
+        "    # Input 14x14x16 image\n",
+        "    # 32 filters\n",
+        "    # 3x3x16 filter size (they also have 16 channels)\n",
+        "    # stride 2 (downsampling by factor of 2)\n",
+        "    # Output image: 7x7x32\n",
+        "    self.conv2 = nn.Conv2d(16, 32, 3, stride=2, padding=1)\n",
+        "\n",
+        "    # Fully connected linear layer\n",
+        "    self.fc1 = nn.Linear(1568, 62)\n",
+        "\n",
+        "  def forward(self, x):\n",
+        "    x = self.conv1(x)\n",
+        "    x = F.relu(x)\n",
+        "    x = self.conv2(x)\n",
+        "    x = F.relu(x)\n",
+        "    x = torch.flatten(x, 1)\n",
+        "    x = self.fc1(x)\n",
+        "    return x"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "metadata": {
+        "id": "LmHt2qnwDT9b"
+      },
+      "outputs": [],
+      "source": [
+        "import torch\n",
+        "\n",
+        "# Try to switch to the CPU if possible\n",
+        "device = torch.device(\"cuda:0\" if torch.cuda.is_available() else \"cpu\")\n",
+        "print(device)"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "metadata": {
+        "id": "YRg5SXnDjmyR"
+      },
+      "outputs": [],
+      "source": [
+        "import torch\n",
+        "\n",
+        "# Reload weights from previously trained model\n",
+        "# NOTE: Must upload file that contains model's pre-trained weights\n",
+        "anneal_net = ConvNet()\n",
+        "anneal_net.to(device)\n",
+        "state_dict = torch.load('model_state.pth')\n",
+        "anneal_net.load_state_dict(state_dict)"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "metadata": {
+        "id": "SiqG-lMEDk0e"
+      },
+      "outputs": [],
+      "source": [
+        "def accuracy(net, dataloader):\n",
+        "  correct = 0\n",
+        "  total = 0\n",
+        "  with torch.no_grad():\n",
+        "    for batch in dataloader: \n",
+        "      # Get images and labels for the current batch\n",
+        "      images, labels = batch[0].to(device), batch[1].to(device)\n",
+        "      # Get predicted labels from our network\n",
+        "      outputs = net(images)\n",
+        "      _, predicted = torch.max(outputs.data, 1)\n",
+        "      # Tally up the number of correct predictions that our network made\n",
+        "      total += labels.size(0)\n",
+        "      correct += (predicted == labels).sum().item()\n",
+        "  return correct/total"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "metadata": {
+        "id": "Lgo7bWq7DwI7"
+      },
+      "outputs": [],
+      "source": [
+        "import torch\n",
+        "import torchvision\n",
+        "\n",
+        "def get_emnist_data():\n",
+        "  # Need to perform a rotate and flip to properly orient the images\n",
+        "  trainset = torchvision.datasets.EMNIST(root='./data', split='byclass', train=True, download=True,\n",
+        "                                        transform=torchvision.transforms.Compose([\n",
+        "                                            lambda img: torchvision.transforms.functional.rotate(img, -90),\n",
+        "                                            lambda img: torchvision.transforms.functional.hflip(img),\n",
+        "                                            torchvision.transforms.ToTensor()\n",
+        "                                        ]))\n",
+        "  trainloader = torch.utils.data.DataLoader(trainset, batch_size=32, shuffle=True, num_workers=8)\n",
+        "\n",
+        "  testset = torchvision.datasets.EMNIST(root='./data', split='byclass', train=False, download=True,\n",
+        "                                      transform=torchvision.transforms.Compose([\n",
+        "                                          lambda img: torchvision.transforms.functional.rotate(img, -90),\n",
+        "                                          lambda img: torchvision.transforms.functional.hflip(img),\n",
+        "                                          torchvision.transforms.ToTensor()\n",
+        "                                      ]))\n",
+        "  testloader = torch.utils.data.DataLoader(testset, batch_size=32, shuffle=False, num_workers=8)\n",
+        "  # 0-9 are for digits, 10-35 are for uppercase letters, 36-61 are for lowercase letters\n",
+        "  classes = []\n",
+        "  for i in range(0, 10):\n",
+        "    classes.append(i)\n",
+        "  for letter in \"ABCDEFGHIJKLMNOPQRSTUVWXYZ\":\n",
+        "    classes.append(letter)\n",
+        "  for letter in \"abcdefghijklmnopqrstuvwxyz\":\n",
+        "    classes.append(letter)\n",
+        "  return {'train': trainloader, 'test': testloader, 'classes': classes}"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "metadata": {
+        "id": "Kx9XS8NhDw_c"
+      },
+      "outputs": [],
+      "source": [
+        "data = get_emnist_data()"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "metadata": {
+        "id": "tFGAvBzBtu43"
+      },
+      "outputs": [],
+      "source": [
+        "# Ensure that the pre-trained model gives reasonable accuracy on the EMNIST dataset\n",
+        "print(\"AnnealNet train accuracy: %f\" % accuracy(anneal_net, data['train']))\n",
+        "print(\"AnnealNet test accuracy: %f\" % accuracy(anneal_net, data['test']))"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "metadata": {
+        "id": "HcA2f7rwI7E1"
+      },
+      "outputs": [],
+      "source": [
+        "def createIndexToCharacterMap():\n",
+        "  indexToCharacter = []\n",
+        "  for i in range(0, 10):\n",
+        "    indexToCharacter.append(i)\n",
+        "  for letter in \"ABCDEFGHIJKLMNOPQRSTUVWXYZ\":\n",
+        "    indexToCharacter.append(letter)\n",
+        "  for letter in \"abcdefghijklmnopqrstuvwxyz\":\n",
+        "    indexToCharacter.append(letter)\n",
+        "  return indexToCharacter"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "metadata": {
+        "id": "P1PDPof_XNj5"
+      },
+      "outputs": [],
+      "source": [
+        "import torch\n",
+        "import numpy as np\n",
+        "from PIL import Image\n",
+        "from torchvision import transforms\n",
+        "\n",
+        "indexToCharacterMap = createIndexToCharacterMap()\n",
+        "transform = transforms.Compose([transforms.ToTensor()])\n",
+        "\n",
+        "# Feed each character of the CAPTCHA into the neural network and make a prediction\n",
+        "for character in characters:\n",
+        "  # Flip color schema of character to match that of the EMNIST dataset\n",
+        "  character = flipColor(character)\n",
+        "  plt.imshow(character)\n",
+        "  plt.show()\n",
+        "  # Transform ndarray to tensor before feeding into character into neural network\n",
+        "  character = transform(character)\n",
+        "  with torch.no_grad():\n",
+        "    output = anneal_net(character.unsqueeze(0).to(device))\n",
+        "    modelPrediction = output.argmax(dim=1)\n",
+        "    print(\"Prediction: \" + str(indexToCharacterMap[modelPrediction.item()]))\n"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {
+        "id": "3Px5GRRfLg3R"
+      },
+      "source": [
+        "## Step 5: Putting it all Together\n",
+        "\n",
+        "Let us see how well our model performs on all the CAPTCHA images in the dataset."
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "metadata": {
+        "id": "m2K_1mRSMgmi"
+      },
+      "outputs": [],
+      "source": [
+        "from torchvision import transforms\n",
+        "\n",
+        "def accuracy(net, imagesDict):\n",
+        "  # Initial set up\n",
+        "  numCorrectCAPTCHAs = 0\n",
+        "  numTotalCAPTCHAs = 0\n",
+        "  numCorrectCharacters = 0\n",
+        "  numTotalCharacters = 0\n",
+        "  numTotalFailedSegments = 0\n",
+        "  indexToCharacterMap = createIndexToCharacterMap()\n",
+        "  transform = transforms.Compose([transforms.ToTensor()]) \n",
+        "\n",
+        "  # Go through each CAPTCHA image in the dataset and calculate relevant statistics\n",
+        "  for imageTag in imagesDict:\n",
+        "    imageData = imagesDict.get(imageTag)\n",
+        "    # Denoise and segment image\n",
+        "    imageData = flipColor(imageData)\n",
+        "    imageDenoised = denoise_captcha(imageData)\n",
+        "    imageDenoised = flipColor(imageDenoised)\n",
+        "    characters = segment_noise(imageDenoised)\n",
+        "    numCorrectCharactersInCAPTCHA = 0\n",
+        "    currCharacter = 0\n",
+        "    # If we have accurately detected that there are five characters in the image,\n",
+        "    # then we should process it. Otherwise, we should ignore it.\n",
+        "    if (len(characters) == 5):\n",
+        "      for character in characters:\n",
+        "        character = flipColor(character)\n",
+        "        character = transform(character)\n",
+        "        with torch.no_grad():\n",
+        "          output = anneal_net(character.unsqueeze(0).to(device))\n",
+        "          modelPrediction = output.argmax(dim=1)\n",
+        "          prediction = str(indexToCharacterMap[modelPrediction.item()])\n",
+        "          if prediction == imageTag[currCharacter]:\n",
+        "            numCorrectCharactersInCAPTCHA = numCorrectCharactersInCAPTCHA + 1\n",
+        "          currCharacter = currCharacter + 1\n",
+        "      if numCorrectCharactersInCAPTCHA == 5:\n",
+        "        numCorrectCAPTCHAs = numCorrectCAPTCHAs + 1\n",
+        "      numCorrectCharacters = numCorrectCharacters + numCorrectCharactersInCAPTCHA\n",
+        "    else:\n",
+        "      numTotalFailedSegments += 1\n",
+        "    \n",
+        "    numTotalCAPTCHAs = numTotalCAPTCHAs + 1\n",
+        "    numTotalCharacters = numTotalCharacters + 5\n",
+        "    \n",
+        "  return [numCorrectCAPTCHAs / numTotalCAPTCHAs, numCorrectCharacters / numTotalCharacters, numTotalFailedSegments]"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "metadata": {
+        "id": "EUvTI_hJRHn5"
+      },
+      "outputs": [],
+      "source": [
+        "accuracies = accuracy(anneal_net, imagesDict)\n",
+        "print(\"CAPTCHA accuracy: %f\" % accuracies[0])\n",
+        "print(\"Character accuracy: %f\" % accuracies[1])\n",
+        "print(\"Number of failed segmentations: %d\" % accuracies[2])"
+      ]
+    }
+  ],
+  "metadata": {
+    "accelerator": "GPU",
+    "colab": {
+      "collapsed_sections": [
+        "HAB6IoYL_aSP",
+        "63p7UH_NbRBC"
+      ],
+      "provenance": [],
+      "include_colab_link": true
+    },
+    "gpuClass": "standard",
+    "kernelspec": {
+      "display_name": "Python 3",
+      "name": "python3"
+    },
+    "language_info": {
+      "name": "python"
+    }
+  },
+  "nbformat": 4,
+  "nbformat_minor": 0
+}
